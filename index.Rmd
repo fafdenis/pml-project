@@ -1,0 +1,213 @@
+---
+title: "Practical Machine Learning Project"
+author: "Stephanie Denis"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, warning = FALSE, message = FALSE)
+```
+
+## Executive Summary
+In this exercise we predicted how well 16 young health participants performed their strength exercises. They were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different ways, some of which had to be done using proper form, while others were done using improper form. We tested four different prediction models (decision tree, boosting tree, bagging tree and random forest) to determine the model that best predicts the data. We found that the random forest prediction model best predicted the manner in which these exercises were performed.
+
+## Load Data
+```{r load-data}
+# Set working directory
+setwd("~/Desktop/Rprogramming/8_Practical_Machine_Learning/practical-machine-learning/")
+
+# Download files from URL
+if(!file.exists("./data/pml-training.csv")) {
+  url.training <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+  download.file(url.training, destfile="./data/pml-training.csv")
+}
+
+if(!file.exists("./data/pml-testing.csv")) {
+  url.testing <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+  download.file(url.testing, destfile="./data/pml-testing.csv")
+}
+
+# Load data 
+pml.training <- read.csv("./data/pml-training.csv", na.strings=c("NA","#DIV/0!",""))
+pml.testing <- read.csv("./data/pml-testing.csv", na.strings=c("NA","#DIV/0!",""))
+
+# Load packages
+library(knitr); library(caret); library(gbm); library(randomForest); 
+library(rattle); library(rpart); library(rpart.plot); library(gbm); 
+library(plyr); library(ipred); library(e1071)
+
+# Check dimensions before cleaning data
+dim(pml.training)
+dim(pml.testing)
+unique(pml.training$classe)
+```
+
+The training set contains 19,622 observations and 160 variables, while the test set consists of 20 observations and 160 variables. The outcome variable used to predict the manner in which the dumbbell bicep curls are being performed is called `classe` and it  contains 5 levels: exactly according to the specification (Class A); throwing the elbows to the front (Class B); lifting the dumbbell only halfway (Class C); lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+## Data Cleaning
+The raw training and test sets needed to be cleaned by removing all missing values in order to run the prediction models. 
+
+```{r clean-data}
+# Removing predictors that are unnecessary for the analysis
+pml.training <- pml.training[, -c(1:7)] 
+pml.testing <- pml.testing[, -c(1:7)] 
+
+# Removing predictors with NAs
+pml.training <- pml.training[, colSums(is.na(pml.training))==0]
+pml.testing <- pml.testing[, colSums(is.na(pml.testing))==0]
+
+# Check dimensions of training and testing data sets
+dim(pml.training)
+dim(pml.testing)
+```
+
+The cleaned training and test sets now contain 53 variables.
+
+## Data Partitioning
+In order to proceed with the prediction models, the cleaned training set had to be partitioned in two sets. One set served as the training set which we used to run the prediction model. The other set is used to predict the out-of-sample observations. 
+
+```{r split-data}
+# Partitioning clean training data set
+inTrain <- createDataPartition(y=pml.training$classe, p=0.70, list=FALSE)
+training <- pml.training[inTrain,]
+testing <- pml.training[-inTrain,]
+
+# Check dimensions of training and testing data sets
+dim(training)
+dim(testing)
+
+# Number of observations by class
+summary(training$classe)
+```
+
+Seventy percent (13,737 observations) of the cleaned training set went into a new training set, while 30 percent (5,885 observations) went into a new test set. Each class in the training set is evenly distributed. 
+
+## Baseline Prediction Model
+For our baseline model, we applied a decision tree algorithm using all possible predictors in our data set to predict the manner in which participants performed dumbbell bicep exercises among the five possible classes. We used the cross-validation method to select the number of predictors and a three fold cross-validation to lower the amount of time it takes to run the models. 
+
+```{r baseline-model}
+# Set seed for reproducibility
+set.seed(123)
+
+# Decision trees
+mod_dt <- train(classe ~ ., data=training, method="rpart",
+                trControl=trainControl(method="cv", number=3))
+
+# Predict out-of-sample  
+pred_dt <- predict(mod_dt, testing)
+
+# Plot decision trees
+fancyRpartPlot(mod_dt$finalModel)
+```
+
+The decision tree shows that `roll_belt`, `pitch_forearm`, `magnet_dumbbell_y` and `roll_forearm` have a higher chance of explaining the manner in which the exercise is performed by participants. 
+
+```{r crosstab-dt}
+# Confusion matrix
+cm_dt <- confusionMatrix(pred_dt, testing$classe)
+cm_dt$table
+
+# Accurary rate
+accuracy_dt <- round((as.numeric(cm_dt$overall[1]))*100,1)
+
+# Out-of-Sample error rate
+oose_dt <- round((1-as.numeric(cm_dt$overall[1]))*100,1)
+```
+
+In the cross-tabulation above, each column holds the reference (or actual) data and within each row is the prediction. The diagonal represents instances where our observation correctly predicted the class of the item. We can see here that the decision model predicted poorly the different classes. With an overall accuracy rate of `r accuracy_dt` percent and an expected out-of-sample error rate of `r oose_dt`, we decided to estimate other models with much higher precision for us to choose from.
+
+## Other Prediction Models
+We applied a random forest prediction model, then a boosting tree model, and finally we ran a bagging tree model using all possible predictors in our data set to predict the manner in which the bicep dumbbell curls are done. Similarly to our baseline model, we used the cross-validation method to select the number of predictors and a three fold cross-validation to lower the amount of time it takes to run the models. 
+
+```{r other-models}
+# Set seed for reproducibility
+set.seed(123)
+
+# Fit and predict models
+mod_rf <- train(classe ~ ., data=training, method="rf", importance=TRUE,
+               trControl = trainControl(method="cv", number=3))
+pred_rf <- predict(mod_rf, testing)
+
+mod_gbm <- train(classe ~ ., data=training, method="gbm", verbose=FALSE,
+               trControl = trainControl(method = "cv", number=3))
+pred_gbm <- predict(mod_gbm, testing)
+
+mod_bag <- train(classe ~ ., data=training, method="treebag")
+pred_bag <- predict(mod_bag, testing)
+```
+
+## Choosing Best Model
+We predicted each model using the testing set and selected the model with the highest overall accuracy rate.
+
+```{r best-model}
+# Set seed for reproducibility
+set.seed(123)
+
+# Confusion matrix
+cm_gbm <- confusionMatrix(pred_gbm, testing$classe)
+cm_bag <- confusionMatrix(pred_bag, testing$classe)
+cm_rf <- confusionMatrix(pred_rf, testing$classe)
+
+# Choosing prediction model with highest overall accuracy
+bestMod <- data.frame(Tree=cm_dt$overall[1],
+                      Boosting=cm_gbm$overall[1],
+                      Bagging=cm_bag$overall[1], 
+                      RandomForest=cm_rf$overall[1])
+# Accurary rate
+accuracy_rf <- round((as.numeric(cm_rf$overall[1]))*100,1)
+
+# Out-of-Sample error rate
+oose_rf <- round((1-as.numeric(cm_rf$overall[1]))*100,1)
+
+# Best model
+round(bestMod,3)
+```
+
+We found that among all models tested, the random forest had the highest overall accuracy rate, `r accuracy_rf` percent, and an expected out-of-sample error rate of `r oose_rf` percent. 
+
+## Interpreting Best Model
+We refered to the table comparing observed and predicted classes as well as to cross-validation plots and the list of variables by importance to interpret the results from our random forest model. 
+
+```{r crosstab-rf}
+# Cross-tabulation of observed and predicted classes
+cm_rf$table
+```
+
+The diagonal in the cross-tabulation shows that our random forest model does a markedly better job at predicting classes than our decision tree model. Class C (lifting the dumbbell only halfway) and Class D (when lowering the dumbbell only halfway) were subject to less precision than the other classes in our random forest model.
+
+```{r plot-accuracy-rf}
+# Cross-validation plots 
+plot(mod_rf, main="Accuracy Rate")
+```
+
+The cross-validation plot shows that the model with 2 randomly selected predictors has the highest overall accuracy rate. 
+
+```{r plot-error-rf}
+# Cross-validation plots 
+plot(mod_rf$finalModel, main="Error Rate")
+```
+
+The error rate plot shows that it takes 100 trees to stabilize the error estimate.
+
+```{r varimp-rf}
+# Variable importance
+plot(varImp(mod_rf), top=10, main="Top 10 Predictors")
+```
+
+The variables by importance plot shows that `roll_belt`, `pitch_belt` and `yaw_belt` have a higher chance than the other variables of explaining the manner in which the exercise is performed by participants.
+
+## Prediction
+We used our random forest model chosen above to predict the original test set with the 20 out-of-sample observations. 
+
+```{r pred-test}
+# Predict using original testing set
+pred <- predict(mod_rf, pml.testing)
+pred
+```
+
+## Conclusion
+We predicted how well 16 young health participants performed one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl. Using a random forest prediction model, we were able to predict the manner in which they performed these exercises with an accuracy rate of `r accuracy_rf` percent in the out-of-sample set.
+
+## Source Data
+Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements.  http://groupware.les.inf.puc-rio.br/har#ixzz4gvEue4LQ
